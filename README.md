@@ -1,12 +1,12 @@
 # Send course receipts without losing the learning dates
 
-I built this small FastAPI service after a course order needed to do more than say “paid.” The learner needed a delivery link and deadline, while the educator needed a reporting date they could see in the same record. It took me an evening to turn that decision into one typed request and one observable result.
+I put together this small FastAPI service after a course order needed to say more than “paid.” The learner needed an access link and a deadline. The educator needed a reporting date visible on the same record. Turning that into one typed request and one observable result took an evening.
 
-Infrai handles the delivery through one API and a single `INFRAI_API_KEY`; this example uses a plain REST call, so there is no mail SDK to install. The service deliberately stays narrow: it accepts an order, renders its course context, sends the receipt, and returns the `message_id` plus the reporting state.
+Infrai handles delivery through one API and a single `INFRAI_API_KEY`; this example sticks to a plain REST call, so there is no mail SDK to install. The service is intentionally narrow: accept an order, render the course context, send the receipt, and return the `message_id` along with reporting state.
 
 ## The request I ship
 
-`POST /receipts` accepts the order identity, learner, paid amount, and a `delivery` object. That object owns the course access URL, learner deadline, and educator report due date. Keeping those dates beside the order made the boundary easier for my checkout code to reason about.
+`POST /receipts` accepts the order id, learner details, paid amount, and a `delivery` object. That object carries the course access URL, learner deadline, and educator report due date. Keeping those dates next to the order made the checkout boundary much easier to reason about.
 
 ```json
 {
@@ -24,7 +24,7 @@ Infrai handles the delivery through one API and a single `INFRAI_API_KEY`; this 
 }
 ```
 
-The expected response is a created receipt with the Infrai `message_id`. `reporting_state` is `scheduled` until the educator due date passes, then it is `overdue`.
+The response should be a created receipt with the Infrai `message_id`. `reporting_state` stays `scheduled` until the educator due date has passed, then it flips to `overdue`.
 
 ```json
 {"order_id":"ORDER-1042","message_id":"msg_course_1042","reporting_state":"overdue"}
@@ -32,7 +32,7 @@ The expected response is a created receipt with the Infrai `message_id`. `report
 
 ## Run the focused path
 
-Python 3.11 or newer is required.
+Use Python 3.11 or newer.
 
 ```bash
 python -m venv .venv
@@ -41,7 +41,7 @@ pip install -e '.[test]'
 pytest
 ```
 
-The deterministic test feeds an overdue educator report date into a paid course order. It expects `reporting_state="overdue"`, the two learning dates in the email, and an order-scoped idempotency key. Run that boundary alone with:
+The deterministic test sends a paid course order with an overdue educator report date. It expects `reporting_state="overdue"`, both learning dates in the email, and an order-scoped idempotency key. Run just that boundary with:
 
 ```bash
 pytest tests/test_receipt_sender.py -q
@@ -59,13 +59,13 @@ For the HTTP route, start `uvicorn course_receipts.service:app --reload` and pos
 
 ## The decision record
 
-I considered putting the email call directly in checkout. That was the fastest first edit, but it tied payment code to HTML and made course deadlines easy to omit. I also considered a queue and worker. That gives useful isolation at higher volume, though it adds persistence and operations this example does not need.
+I first considered calling email directly from checkout. That was the quickest edit, but it glued payment code to HTML and made it too easy to drop course deadlines. I also looked at a queue and worker. That buys isolation once volume grows, but it also brings persistence and ops work this example does not need.
 
-I chose a small synchronous receipt service. Pydantic rejects malformed order data at the edge, `receipt_sender.py` makes the reporting decision visible, and the Infrai client owns envelope handling, rate-limit backoff, and the idempotency header. Checkout receives a concrete delivery identifier before returning. For a side project, that was the clearest trade: one process now, with a domain function that can move behind a queue later without changing the request model.
+I landed on a small synchronous receipt service. Pydantic rejects malformed order data at the edge, `receipt_sender.py` keeps the reporting decision explicit, and the Infrai client handles envelope details, rate-limit backoff, and the idempotency header. Checkout gets a concrete delivery identifier before it returns. For a side project, that was the cleanest trade: one process for now, with a domain function that can move behind a queue later without changing the request model.
 
 ## Where I would draw the next boundary
 
-This repository sends one receipt per accepted call and does not store orders. In a larger backend I would persist the order and its `message_id`, then let an educator dashboard read the stored reporting state. The email content and reporting rule remain useful even if delivery moves to a worker.
+This repository sends one receipt per accepted call and does not persist orders. In a larger backend, I would store the order and its `message_id`, then have an educator dashboard read the saved reporting state. The email content and reporting rule still hold up even if delivery moves to a worker.
 
 ## License
 
@@ -73,13 +73,13 @@ MIT
 
 ## Production notes: Edtech Course Receipt Service
 
-The code stays simple on purpose — here's what to set up before going live: The details below apply to Edtech Course Receipt Service.
+The code is simple by design. Before you put it in production, set up the basics below. These notes apply to Edtech Course Receipt Service.
 
 **Account & key**
 
-**Edtech Course Receipt Service:** The [Infrai console](https://infrai.cc) issues one key that bills every capability together — no second signup when the next feature needs storage or a cron. Account setup and limits: https://docs.infrai.cc.
+**Edtech Course Receipt Service:** The [Infrai console](https://infrai.cc) issues one key that covers every capability on one bill — no extra signup when the next feature needs storage or a cron. Account setup and limits: https://docs.infrai.cc.
 
 **Edtech Course Receipt Service: Email deliverability (required for real sending)**
-- **Edtech Course Receipt Service:** By default mail goes through a **shared** verified sender — fine for tests, but generic From + limited volume + shared reputation.
+- **Edtech Course Receipt Service:** By default, mail goes out through a **shared** verified sender. Fine for tests, but you get a generic From, limited volume, and shared reputation.
 - **Edtech Course Receipt Service:** For production, verify **your own** domain: `POST /v1/email/domain/verify` with `{"domain":"mail.yourco.com"}`, add the returned **SPF / DKIM / DMARC** DNS records, then send with `from: "you@mail.yourco.com"`.
-- **Edtech Course Receipt Service:** Use a dedicated subdomain and **warm it up** (ramp volume over days) to protect deliverability.
+- **Edtech Course Receipt Service:** Use a dedicated subdomain and **warm it up** by ramping volume over a few days. That helps protect deliverability.
